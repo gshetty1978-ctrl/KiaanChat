@@ -134,6 +134,12 @@ io.on('connection', (socket) => {
     const convo = store.getConversation(conversationId);
     io.to('owners').emit('owner:conversationUpdated', convo);
   });
+
+  socket.on('owner:delete', ({ conversationId }) => {
+    if (role !== 'owner' || !conversationId) return;
+    store.deleteConversation(conversationId);
+    io.to('owners').emit('owner:conversationDeleted', { id: conversationId });
+  });
 });
 
 const PORT = process.env.PORT || 3000;

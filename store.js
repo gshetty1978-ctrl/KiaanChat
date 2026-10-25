@@ -52,6 +52,10 @@ function create() {
     listConversations() {
       return Object.values(data.conversations).sort((a, b) => b.updatedAt - a.updatedAt);
     },
+    deleteConversation(id) {
+      delete data.conversations[id];
+      save();
+    },
     addOwnerToken(token) {
       data.ownerTokens.push(token);
       save();
