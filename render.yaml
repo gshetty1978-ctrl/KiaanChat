@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: kiaanchat
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      # The PIN that unlocks the owner inbox at /owner.html. Set in the
+      # Render dashboard, never committed here.
+      - key: OWNER_PIN
+        sync: false

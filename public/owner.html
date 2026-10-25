@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>KiaanChat Inbox</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232f6e62'/%3E%3Ctext x='32' y='44' font-family='Georgia,serif' font-size='30' font-weight='600' fill='%23f6f5f1' text-anchor='middle'%3EK%3C/text%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0f1115; --panel:#181b22; --panel2:#1f2430; --line:#2a2f3a; --text:#e6e9ef;
+    --muted:#96a0b5; --accent:#2f6e62; --accent2:#4fb6a3; --bad:#ef4444;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,sans-serif;display:flex;flex-direction:column}
+
+  #gate{flex:1;display:flex;align-items:center;justify-content:center;padding:24px}
+  .gate-card{max-width:320px;width:100%;display:flex;flex-direction:column;gap:14px;text-align:center}
+  .gate-card h2{margin:0;font-size:1.3rem}
+  input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:1rem}
+  input:focus{outline:2px solid var(--accent2)}
+  button{padding:12px 18px;border-radius:10px;border:none;background:var(--accent);color:#fff;font-size:1rem;font-weight:600;cursor:pointer}
+  button:hover{background:var(--accent2)}
+  #gateError{color:var(--bad);font-size:0.85rem;min-height:1.1em}
+
+  #app{flex:1;display:none;min-height:0}
+  .layout{flex:1;display:flex;min-height:0;height:100%}
+  #list{width:260px;flex-shrink:0;border-right:1px solid var(--line);overflow-y:auto}
+  .conv{padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .conv:hover, .conv.active{background:var(--panel2)}
+  .conv .name{font-weight:600;font-size:0.92rem}
+  .conv .preview{color:var(--muted);font-size:0.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}
+  #listEmpty{color:var(--muted);padding:20px;font-size:0.88rem;text-align:center}
+
+  #thread{flex:1;display:flex;flex-direction:column;min-width:0}
+  #threadHead{padding:14px 16px;border-bottom:1px solid var(--line);font-weight:600}
+  #threadMsgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:72%;padding:9px 13px;border-radius:14px;font-size:0.94rem;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+  .msg.me{align-self:flex-end;background:var(--accent);border-bottom-right-radius:4px}
+  .msg.them{align-self:flex-start;background:var(--panel2);border-bottom-left-radius:4px}
+  #noSelect{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+  #replyBox{display:none;gap:8px;padding:12px;border-top:1px solid var(--line)}
+  #replyBox input{flex:1}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="gate-card">
+    <h2>KiaanChat Inbox</h2>
+    <input id="pinInput" type="password" placeholder="PIN" autocomplete="off">
+    <button id="pinBtn" type="button">Unlock</button>
+    <p id="gateError"></p>
+  </div>
+</div>
+
+<div id="app">
+  <div class="layout">
+    <div id="list"><p id="listEmpty">No conversations yet.</p></div>
+    <div id="thread">
+      <div id="noSelect">Pick a conversation on the left.</div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  (function(){
+    var socket = io();
+    var gateEl = document.getElementById('gate');
+    var appEl = document.getElementById('app');
+    var pinInput = document.getElementById('pinInput');
+    var pinBtn = document.getElementById('pinBtn');
+    var gateError = document.getElementById('gateError');
+    var listEl = document.getElementById('list');
+    var listEmpty = document.getElementById('listEmpty');
+    var threadEl = document.getElementById('thread');
+
+    var conversations = {};
+    var activeId = null;
+
+    function saveToken(t){ try { localStorage.setItem('kc_owner_token', t); } catch(e) {} }
+    function getToken(){ try { return localStorage.getItem('kc_owner_token'); } catch(e) { return null; } }
+
+    function tryAuth(token){
+      socket.emit('owner:auth', { token: token });
+    }
+
+    socket.on('connect', function(){
+      var token = getToken();
+      if (token) tryAuth(token);
+    });
+
+    socket.on('owner:authResult', function(res){
+      if (res.ok){
+        gateEl.style.display = 'none';
+        appEl.style.display = 'block';
+      } else {
+        gateEl.style.display = 'flex';
+        appEl.style.display = 'none';
+        try { localStorage.removeItem('kc_owner_token'); } catch(e) {}
+      }
+    });
+
+    pinBtn.addEventListener('click', function(){
+      var pin = pinInput.value;
+      if (!pin) return;
+      gateError.textContent = '';
+      fetch('/api/owner/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pin })
+      }).then(function(r){ return r.json(); }).then(function(data){
+        if (data.ok){
+          saveToken(data.token);
+          tryAuth(data.token);
+        } else {
+          gateError.textContent = data.error || 'Wrong PIN.';
+        }
+      }).catch(function(){
+        gateError.textContent = 'Could not reach the server.';
+      });
+    });
+    pinInput.addEventListener('keydown', function(e){ if (e.key === 'Enter') pinBtn.click(); });
+
+    function renderList(){
+      var ids = Object.keys(conversations).sort(function(a, b){
+        return conversations[b].updatedAt - conversations[a].updatedAt;
+      });
+      if (!ids.length){
+        listEl.innerHTML = '';
+        listEl.appendChild(listEmpty);
+        return;
+      }
+      listEl.innerHTML = '';
+      ids.forEach(function(id){
+        var c = conversations[id];
+        var last = c.messages[c.messages.length - 1];
+        var div = document.createElement('div');
+        div.className = 'conv' + (id === activeId ? ' active' : '');
+        div.innerHTML = '<div class="name"></div><div class="preview"></div>';
+        div.querySelector('.name').textContent = c.name || 'Someone';
+        div.querySelector('.preview').textContent = last ? last.text : 'No messages yet';
+        div.addEventListener('click', function(){ openConversation(id); });
+        listEl.appendChild(div);
+      });
+    }
+
+    function openConversation(id){
+      activeId = id;
+      renderList();
+      socket.emit('owner:open', { conversationId: id });
+    }
+
+    function renderThread(convo){
+      threadEl.innerHTML =
+        '<div id="threadHead"></div>' +
+        '<div id="threadMsgs"></div>' +
+        '<form id="replyBox" style="display:flex">' +
+        '<input id="replyInput" type="text" placeholder="Reply…" maxlength="2000" autocomplete="off">' +
+        '<button type="submit">Send</button>' +
+        '</form>';
+      document.getElementById('threadHead').textContent = convo.name || 'Someone';
+      var msgsEl = document.getElementById('threadMsgs');
+      convo.messages.forEach(function(msg){
+        var el = document.createElement('div');
+        el.className = 'msg ' + (msg.from === 'owner' ? 'me' : 'them');
+        el.textContent = msg.text;
+        msgsEl.appendChild(el);
+      });
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+
+      var replyForm = document.getElementById('replyBox');
+      var replyInput = document.getElementById('replyInput');
+      replyForm.addEventListener('submit', function(e){
+        e.preventDefault();
+        var text = replyInput.value.trim();
+        if (!text) return;
+        socket.emit('owner:send', { conversationId: convo.id, text: text });
+        replyInput.value = '';
+      });
+    }
+
+    socket.on('owner:conversations', function(list){
+      conversations = {};
+      list.forEach(function(c){ conversations[c.id] = c; });
+      renderList();
+    });
+
+    socket.on('owner:conversationUpdated', function(c){
+      conversations[c.id] = c;
+      renderList();
+      if (c.id === activeId) renderThread(c);
+    });
+
+    socket.on('owner:history', function(convo){
+      conversations[convo.id] = convo;
+      renderThread(convo);
+    });
+  })();
+</script>
+</body>
+</html>
