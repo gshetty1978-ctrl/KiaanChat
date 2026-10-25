@@ -84,6 +84,17 @@ function makeLimiter(max, windowMs) {
 }
 const messageLimiter = makeLimiter(20, 60000);
 
+/* A plain word-list profanity check on visitor messages — not perfect, but
+   catches the obvious stuff without pulling in a heavy dependency. */
+const BAD_WORDS = [
+  'fuck', 'shit', 'bitch', 'bastard', 'asshole', 'dick', 'piss', 'cunt',
+  'slut', 'whore', 'fag', 'retard', 'nigger', 'nigga'
+];
+const BAD_WORDS_RE = new RegExp('\\b(' + BAD_WORDS.join('|') + ')\\b', 'i');
+function containsProfanity(text) {
+  return BAD_WORDS_RE.test(text);
+}
+
 io.on('connection', (socket) => {
   let role = null;
   let visitorId = null;
@@ -102,11 +113,38 @@ io.on('connection', (socket) => {
     if (role !== 'visitor' || !visitorId) return;
     if (!text || typeof text !== 'string' || !text.trim()) return;
     if (!messageLimiter(visitorId)) return;
+    if (containsProfanity(text)) {
+      socket.emit('visitor:blocked', { reason: 'profanity' });
+      return;
+    }
     const msg = store.addMessage(visitorId, 'visitor', text.trim());
     io.to('visitor:' + visitorId).emit('chat:message', msg);
     const convo = store.getConversation(visitorId);
     io.to('owners').emit('owner:conversationUpdated', convo);
     notifyOwners(convo.name || 'Someone', text.trim());
+  });
+
+  socket.on('visitor:editMessage', ({ messageId, text }) => {
+    if (role !== 'visitor' || !visitorId || !messageId) return;
+    if (!text || typeof text !== 'string' || !text.trim()) return;
+    if (containsProfanity(text)) {
+      socket.emit('visitor:blocked', { reason: 'profanity' });
+      return;
+    }
+    const msg = store.editMessage(visitorId, messageId, 'visitor', text.trim());
+    if (!msg) return;
+    io.to('visitor:' + visitorId).emit('chat:messageEdited', msg);
+    const convo = store.getConversation(visitorId);
+    io.to('owners').emit('owner:conversationUpdated', convo);
+  });
+
+  socket.on('visitor:deleteMessage', ({ messageId }) => {
+    if (role !== 'visitor' || !visitorId || !messageId) return;
+    const ok = store.deleteMessage(visitorId, messageId, 'visitor');
+    if (!ok) return;
+    io.to('visitor:' + visitorId).emit('chat:messageDeleted', { id: messageId });
+    const convo = store.getConversation(visitorId);
+    io.to('owners').emit('owner:conversationUpdated', convo);
   });
 
   socket.on('owner:auth', ({ token }) => {
@@ -131,6 +169,25 @@ io.on('connection', (socket) => {
     if (!text || typeof text !== 'string' || !text.trim()) return;
     const msg = store.addMessage(conversationId, 'owner', text.trim());
     io.to('visitor:' + conversationId).emit('chat:message', msg);
+    const convo = store.getConversation(conversationId);
+    io.to('owners').emit('owner:conversationUpdated', convo);
+  });
+
+  socket.on('owner:editMessage', ({ conversationId, messageId, text }) => {
+    if (role !== 'owner' || !conversationId || !messageId) return;
+    if (!text || typeof text !== 'string' || !text.trim()) return;
+    const msg = store.editMessage(conversationId, messageId, 'owner', text.trim());
+    if (!msg) return;
+    io.to('visitor:' + conversationId).emit('chat:messageEdited', msg);
+    const convo = store.getConversation(conversationId);
+    io.to('owners').emit('owner:conversationUpdated', convo);
+  });
+
+  socket.on('owner:deleteMessage', ({ conversationId, messageId }) => {
+    if (role !== 'owner' || !conversationId || !messageId) return;
+    const ok = store.deleteMessage(conversationId, messageId, 'owner');
+    if (!ok) return;
+    io.to('visitor:' + conversationId).emit('chat:messageDeleted', { id: messageId });
     const convo = store.getConversation(conversationId);
     io.to('owners').emit('owner:conversationUpdated', convo);
   });

@@ -51,15 +51,30 @@
   .msg{padding:9px 13px; border-radius:14px; font-size:0.94rem; line-height:1.4; white-space:pre-wrap; word-break:break-word}
   .msg-row.me .msg{background:var(--bubble-me); border-bottom-right-radius:4px}
   .msg-row.them .msg{background:var(--bubble-them); border-bottom-left-radius:4px}
-  .msg-time{font-size:0.72rem; color:var(--muted); margin-top:3px; padding:0 4px}
+  .msg-foot{display:flex; align-items:center; gap:8px; margin-top:3px; padding:0 4px}
+  .msg-time{font-size:0.72rem; color:var(--muted)}
+  .msg-time.edited::after{content:" · edited"}
+  .msg-actions{display:none; gap:6px}
+  .msg-row.me:hover .msg-actions{display:flex}
+  .msg-actions button{
+    background:none; border:none; color:var(--muted); font-size:0.72rem;
+    padding:0; cursor:pointer; font-weight:400;
+  }
+  .msg-actions button:hover{color:var(--text); background:none; text-decoration:underline}
+  .msg-edit-input{
+    width:100%; padding:7px 11px; border-radius:12px; border:1px solid var(--accent2);
+    background:var(--panel); color:var(--text); font-size:0.94rem;
+  }
   .empty{color:var(--muted); text-align:center; font-size:0.9rem; padding:24px}
 
   #composer{
-    display:flex; gap:8px; padding:12px; border-top:1px solid var(--line);
+    display:flex; flex-direction:column; gap:6px; padding:12px; border-top:1px solid var(--line);
     padding-bottom:max(12px, env(safe-area-inset-bottom, 0px));
   }
+  #composerRow{display:flex; gap:8px}
   #composer input{flex:1}
   #composer button{flex-shrink:0}
+  #composerErr{color:#ef4444; font-size:0.82rem; min-height:1.1em; margin:0}
 </style>
 </head>
 <body>
@@ -85,8 +100,11 @@
 <div id="chat">
   <div id="messages"></div>
   <form id="composer">
-    <input id="textInput" type="text" placeholder="Type a message…" maxlength="2000" autocomplete="off">
-    <button type="submit">Send</button>
+    <div id="composerRow">
+      <input id="textInput" type="text" placeholder="Type a message…" maxlength="2000" autocomplete="off">
+      <button type="submit">Send</button>
+    </div>
+    <p id="composerErr"></p>
   </form>
 </div>
 
@@ -122,6 +140,13 @@
     }
     var composer = document.getElementById('composer');
     var textInput = document.getElementById('textInput');
+    var composerErr = document.getElementById('composerErr');
+    var msgEls = {};
+
+    /* Same list the server checks — this is just for instant feedback; the
+       server has the final say. */
+    var BAD_WORDS_RE = /\b(fuck|shit|bitch|bastard|asshole|dick|piss|cunt|slut|whore|fag|retard|nigger|nigga)\b/i;
+    function containsProfanity(t){ return BAD_WORDS_RE.test(t); }
 
     function getVisitorId(){
       try {
@@ -144,19 +169,71 @@
       return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + time;
     }
 
+    function startEdit(msg, bubble, timeEl){
+      var input = document.createElement('input');
+      input.className = 'msg-edit-input';
+      input.type = 'text';
+      input.maxLength = 2000;
+      input.value = msg.text;
+      bubble.replaceWith(input);
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+
+      function finish(save){
+        var newText = input.value.trim();
+        input.replaceWith(bubble);
+        if (save && newText && newText !== msg.text){
+          if (containsProfanity(newText)){
+            composerErr.textContent = "Let's keep it friendly — try rewording that.";
+            return;
+          }
+          socket.emit('visitor:editMessage', { messageId: msg.id, text: newText });
+        }
+      }
+      input.addEventListener('keydown', function(e){
+        if (e.key === 'Enter'){ e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape'){ finish(false); }
+      });
+      input.addEventListener('blur', function(){ finish(true); });
+    }
+
     function renderMessage(msg){
       var row = document.createElement('div');
       row.className = 'msg-row ' + (msg.from === 'visitor' ? 'me' : 'them');
       var bubble = document.createElement('div');
       bubble.className = 'msg';
       bubble.textContent = msg.text;
-      var time = document.createElement('div');
-      time.className = 'msg-time';
+      var foot = document.createElement('div');
+      foot.className = 'msg-foot';
+      var time = document.createElement('span');
+      time.className = 'msg-time' + (msg.editedAt ? ' edited' : '');
       time.textContent = formatTime(msg.at);
+      foot.appendChild(time);
+
+      if (msg.from === 'visitor'){
+        var actions = document.createElement('span');
+        actions.className = 'msg-actions';
+        var editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.textContent = 'Edit';
+        editBtn.addEventListener('click', function(){ startEdit(msg, bubble, time); });
+        var delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', function(){
+          if (!confirm('Delete this message?')) return;
+          socket.emit('visitor:deleteMessage', { messageId: msg.id });
+        });
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+        foot.appendChild(actions);
+      }
+
       row.appendChild(bubble);
-      row.appendChild(time);
+      row.appendChild(foot);
       messagesEl.appendChild(row);
       messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (msg.id) msgEls[msg.id] = { row: row, bubble: bubble, time: time, msg: msg };
     }
 
     function startChat(name){
@@ -168,6 +245,7 @@
 
     socket.on('visitor:history', function(history){
       messagesEl.innerHTML = '';
+      msgEls = {};
       if (!history.length){
         var empty = document.createElement('p');
         empty.className = 'empty';
@@ -182,6 +260,28 @@
       var empty = messagesEl.querySelector('.empty');
       if (empty) empty.remove();
       renderMessage(msg);
+    });
+
+    socket.on('chat:messageEdited', function(msg){
+      var entry = msgEls[msg.id];
+      if (!entry) return;
+      entry.bubble.textContent = msg.text;
+      entry.time.textContent = formatTime(msg.at);
+      entry.time.className = 'msg-time edited';
+      entry.msg = msg;
+    });
+
+    socket.on('chat:messageDeleted', function(data){
+      var entry = msgEls[data.id];
+      if (!entry) return;
+      entry.row.remove();
+      delete msgEls[data.id];
+    });
+
+    socket.on('visitor:blocked', function(data){
+      if (data.reason === 'profanity'){
+        composerErr.textContent = "Let's keep it friendly — try rewording that.";
+      }
     });
 
     startBtn.addEventListener('click', function(){
@@ -203,6 +303,11 @@
       e.preventDefault();
       var text = textInput.value.trim();
       if (!text) return;
+      composerErr.textContent = '';
+      if (containsProfanity(text)){
+        composerErr.textContent = "Let's keep it friendly — try rewording that.";
+        return;
+      }
       socket.emit('visitor:send', { text: text });
       textInput.value = '';
     });

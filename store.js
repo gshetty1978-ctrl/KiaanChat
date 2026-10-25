@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 /* A plain JSON file as the datastore. Fine for a small personal chat app —
    just know that Render's free tier wipes local disk on every redeploy, so
@@ -43,11 +44,28 @@ function create() {
     },
     addMessage(id, from, text) {
       const c = this.getConversation(id);
-      const msg = { from, text: text.slice(0, 2000), at: Date.now() };
+      const msg = { id: crypto.randomUUID(), from, text: text.slice(0, 2000), at: Date.now() };
       c.messages.push(msg);
       c.updatedAt = msg.at;
       save();
       return msg;
+    },
+    editMessage(id, messageId, from, text) {
+      const c = this.getConversation(id);
+      const msg = c.messages.find((m) => m.id === messageId && m.from === from);
+      if (!msg) return null;
+      msg.text = text.slice(0, 2000);
+      msg.editedAt = Date.now();
+      save();
+      return msg;
+    },
+    deleteMessage(id, messageId, from) {
+      const c = this.getConversation(id);
+      const idx = c.messages.findIndex((m) => m.id === messageId && m.from === from);
+      if (idx === -1) return false;
+      c.messages.splice(idx, 1);
+      save();
+      return true;
     },
     listConversations() {
       return Object.values(data.conversations).sort((a, b) => b.updatedAt - a.updatedAt);
