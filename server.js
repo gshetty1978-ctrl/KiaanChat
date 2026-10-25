@@ -4,10 +4,29 @@ const http = require('http');
 const crypto = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
+const webpush = require('web-push');
 const { create: createStore } = require('./store.js');
 
 const store = createStore();
 const OWNER_PIN = process.env.OWNER_PIN || '';
+
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY || '';
+if (VAPID_PUBLIC && VAPID_PRIVATE) {
+  webpush.setVapidDetails('mailto:gshetty1978@gmail.com', VAPID_PUBLIC, VAPID_PRIVATE);
+}
+
+function notifyOwners(title, body) {
+  if (!VAPID_PUBLIC || !VAPID_PRIVATE) return;
+  const payload = JSON.stringify({ title, body });
+  store.listPushSubscriptions().forEach((sub) => {
+    webpush.sendNotification(sub, payload).catch((err) => {
+      if (err.statusCode === 404 || err.statusCode === 410) {
+        store.removePushSubscription(sub.endpoint);
+      }
+    });
+  });
+}
 
 const app = express();
 app.set('trust proxy', 1);
@@ -15,6 +34,19 @@ app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/healthz', (req, res) => res.send('ok'));
+
+app.get('/api/vapid-public-key', (req, res) => {
+  res.json({ key: VAPID_PUBLIC });
+});
+
+app.post('/api/owner/subscribe', (req, res) => {
+  const { token, subscription } = req.body || {};
+  if (!token || !store.isOwnerToken(token) || !subscription || !subscription.endpoint) {
+    return res.status(401).json({ ok: false });
+  }
+  store.addPushSubscription(subscription);
+  res.json({ ok: true });
+});
 
 app.post('/api/owner/login', (req, res) => {
   const pin = String((req.body && req.body.pin) || '');
@@ -64,6 +96,7 @@ io.on('connection', (socket) => {
     io.to('visitor:' + visitorId).emit('chat:message', msg);
     const convo = store.getConversation(visitorId);
     io.to('owners').emit('owner:conversationUpdated', convo);
+    notifyOwners(convo.name || 'Someone', text.trim());
   });
 
   socket.on('owner:auth', ({ token }) => {

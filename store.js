@@ -9,9 +9,11 @@ const DATA_FILE = path.join(__dirname, 'data.json');
 
 function load() {
   try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    if (!d.pushSubscriptions) d.pushSubscriptions = [];
+    return d;
   } catch (e) {
-    return { conversations: {}, ownerTokens: [] };
+    return { conversations: {}, ownerTokens: [], pushSubscriptions: [] };
   }
 }
 
@@ -56,6 +58,20 @@ function create() {
     },
     isOwnerToken(token) {
       return data.ownerTokens.includes(token);
+    },
+    addPushSubscription(sub) {
+      const exists = data.pushSubscriptions.some((s) => s.endpoint === sub.endpoint);
+      if (!exists) {
+        data.pushSubscriptions.push(sub);
+        save();
+      }
+    },
+    removePushSubscription(endpoint) {
+      data.pushSubscriptions = data.pushSubscriptions.filter((s) => s.endpoint !== endpoint);
+      save();
+    },
+    listPushSubscriptions() {
+      return data.pushSubscriptions;
     }
   };
 }
