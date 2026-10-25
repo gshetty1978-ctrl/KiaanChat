@@ -179,10 +179,13 @@
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
 
-      function finish(save){
+      var done = false, cancelled = false;
+      function finish(){
+        if (done) return;
+        done = true;
         var newText = input.value.trim();
         input.replaceWith(bubble);
-        if (save && newText && newText !== msg.text){
+        if (!cancelled && newText && newText !== msg.text){
           if (containsProfanity(newText)){
             composerErr.textContent = "Let's keep it friendly — try rewording that.";
             return;
@@ -191,10 +194,10 @@
         }
       }
       input.addEventListener('keydown', function(e){
-        if (e.key === 'Enter'){ e.preventDefault(); finish(true); }
-        else if (e.key === 'Escape'){ finish(false); }
+        if (e.key === 'Enter'){ e.preventDefault(); input.blur(); }
+        else if (e.key === 'Escape'){ cancelled = true; input.blur(); }
       });
-      input.addEventListener('blur', function(){ finish(true); });
+      input.addEventListener('blur', finish);
     }
 
     function renderMessage(msg){
