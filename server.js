@@ -6,6 +6,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const webpush = require('web-push');
 const { create: createStore } = require('./store.js');
+const { persistImage } = require('./r2.js');
 
 const store = createStore();
 const OWNER_PIN = process.env.OWNER_PIN || '';
@@ -113,7 +114,7 @@ io.on('connection', (socket) => {
     socket.emit('visitor:history', convo.messages);
   });
 
-  socket.on('visitor:send', ({ text, image }) => {
+  socket.on('visitor:send', async ({ text, image }) => {
     if (role !== 'visitor' || !visitorId) return;
     const hasImage = image && validImage(image);
     const clean = (text || '').toString();
@@ -123,7 +124,8 @@ io.on('connection', (socket) => {
       socket.emit('visitor:blocked', { reason: 'profanity' });
       return;
     }
-    const msg = store.addMessage(visitorId, 'visitor', clean.trim(), hasImage ? image : null);
+    const finalImage = hasImage ? await persistImage(image) : null;
+    const msg = store.addMessage(visitorId, 'visitor', clean.trim(), finalImage);
     io.to('visitor:' + visitorId).emit('chat:message', msg);
     const convo = store.getConversation(visitorId);
     io.to('owners').emit('owner:conversationUpdated', convo);
@@ -170,12 +172,13 @@ io.on('connection', (socket) => {
     socket.emit('owner:history', convo);
   });
 
-  socket.on('owner:send', ({ conversationId, text, image }) => {
+  socket.on('owner:send', async ({ conversationId, text, image }) => {
     if (role !== 'owner' || !conversationId) return;
     const hasImage = image && validImage(image);
     const clean = (text || '').toString();
     if (!hasImage && !clean.trim()) return;
-    const msg = store.addMessage(conversationId, 'owner', clean.trim(), hasImage ? image : null);
+    const finalImage = hasImage ? await persistImage(image) : null;
+    const msg = store.addMessage(conversationId, 'owner', clean.trim(), finalImage);
     io.to('visitor:' + conversationId).emit('chat:message', msg);
     const convo = store.getConversation(conversationId);
     io.to('owners').emit('owner:conversationUpdated', convo);
