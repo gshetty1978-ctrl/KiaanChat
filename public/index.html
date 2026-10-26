@@ -70,14 +70,21 @@
     background:var(--panel); color:var(--text); font-size:0.94rem;
   }
   .empty{color:var(--muted); text-align:center; font-size:0.9rem; padding:24px}
+  .msg-img{max-width:100%; border-radius:10px; display:block; cursor:pointer}
+  .msg-img + .msg-caption{margin-top:6px}
 
   #composer{
     display:flex; flex-direction:column; gap:6px; padding:12px; border-top:1px solid var(--line);
     padding-bottom:max(12px, env(safe-area-inset-bottom, 0px));
   }
-  #composerRow{display:flex; gap:8px}
+  #composerRow{display:flex; gap:8px; align-items:center}
   #composer input{flex:1}
   #composer button{flex-shrink:0}
+  .attachBtn{
+    background:none; border:none; color:var(--muted); font-size:1.3rem; line-height:1;
+    padding:0 4px; cursor:pointer; flex-shrink:0;
+  }
+  .attachBtn:hover{background:none; color:var(--accent2)}
   #composerErr{color:#ef4444; font-size:0.82rem; min-height:1.1em; margin:0}
 </style>
 </head>
@@ -105,6 +112,8 @@
   <div id="messages"></div>
   <form id="composer">
     <div id="composerRow">
+      <button class="attachBtn" id="attachBtn" type="button" title="Attach image">📎</button>
+      <input id="attachInput" type="file" accept="image/*" style="display:none">
       <input id="textInput" type="text" placeholder="Type a message…" maxlength="2000" autocomplete="off">
       <button type="submit">Send</button>
     </div>
@@ -209,7 +218,21 @@
       row.className = 'msg-row ' + (msg.from === 'visitor' ? 'me' : 'them');
       var bubble = document.createElement('div');
       bubble.className = 'msg';
-      bubble.textContent = msg.text;
+      if (msg.image){
+        var img = document.createElement('img');
+        img.className = 'msg-img';
+        img.src = msg.image;
+        img.addEventListener('click', function(){ window.open(msg.image, '_blank'); });
+        bubble.appendChild(img);
+        if (msg.text){
+          var cap = document.createElement('div');
+          cap.className = 'msg-caption';
+          cap.textContent = msg.text;
+          bubble.appendChild(cap);
+        }
+      } else {
+        bubble.textContent = msg.text;
+      }
       var foot = document.createElement('div');
       foot.className = 'msg-foot';
       var time = document.createElement('span');
@@ -220,10 +243,13 @@
       if (msg.from === 'visitor'){
         var actions = document.createElement('span');
         actions.className = 'msg-actions';
-        var editBtn = document.createElement('button');
-        editBtn.type = 'button';
-        editBtn.textContent = 'Edit';
-        editBtn.addEventListener('click', function(){ startEdit(msg, bubble, time); });
+        if (!msg.image){
+          var editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.textContent = 'Edit';
+          editBtn.addEventListener('click', function(){ startEdit(msg, bubble, time); });
+          actions.appendChild(editBtn);
+        }
         var delBtn = document.createElement('button');
         delBtn.type = 'button';
         delBtn.textContent = 'Delete';
@@ -231,7 +257,6 @@
           if (!confirm('Delete this message?')) return;
           socket.emit('visitor:deleteMessage', { messageId: msg.id });
         });
-        actions.appendChild(editBtn);
         actions.appendChild(delBtn);
         foot.appendChild(actions);
       }
@@ -318,6 +343,42 @@
       socket.emit('visitor:send', { text: text });
       textInput.value = '';
     });
+
+    var attachBtn = document.getElementById('attachBtn');
+    var attachInput = document.getElementById('attachInput');
+    attachBtn.addEventListener('click', function(){ attachInput.click(); });
+    attachInput.addEventListener('change', function(){
+      var file = attachInput.files && attachInput.files[0];
+      attachInput.value = '';
+      if (!file) return;
+      resizeImageFile(file, function(dataUrl){
+        if (!dataUrl) return;
+        composerErr.textContent = '';
+        socket.emit('visitor:send', { text: '', image: dataUrl });
+      });
+    });
+
+    function resizeImageFile(file, cb){
+      if (!file.type || file.type.indexOf('image/') !== 0) return cb(null);
+      var reader = new FileReader();
+      reader.onload = function(){
+        var img2 = new Image();
+        img2.onload = function(){
+          var maxW = 800;
+          var scale = Math.min(1, maxW / img2.width);
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.round(img2.width * scale);
+          canvas.height = Math.round(img2.height * scale);
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img2, 0, 0, canvas.width, canvas.height);
+          cb(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img2.onerror = function(){ cb(null); };
+        img2.src = reader.result;
+      };
+      reader.onerror = function(){ cb(null); };
+      reader.readAsDataURL(file);
+    }
 
     try {
       var savedName = localStorage.getItem('kc_visitor_name');

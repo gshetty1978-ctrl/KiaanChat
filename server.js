@@ -69,7 +69,11 @@ app.post('/api/owner/login', (req, res) => {
 });
 
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, { cors: { origin: '*' }, maxHttpBufferSize: 3e6 });
+
+function validImage(image) {
+  return typeof image === 'string' && /^data:image\/(png|jpeg|jpg|gif|webp);base64,/.test(image) && image.length < 2.5e6;
+}
 
 /* Very small per-socket rate limit: visitors shouldn't be able to flood. */
 function makeLimiter(max, windowMs) {
@@ -109,19 +113,21 @@ io.on('connection', (socket) => {
     socket.emit('visitor:history', convo.messages);
   });
 
-  socket.on('visitor:send', ({ text }) => {
+  socket.on('visitor:send', ({ text, image }) => {
     if (role !== 'visitor' || !visitorId) return;
-    if (!text || typeof text !== 'string' || !text.trim()) return;
+    const hasImage = image && validImage(image);
+    const clean = (text || '').toString();
+    if (!hasImage && !clean.trim()) return;
     if (!messageLimiter(visitorId)) return;
-    if (containsProfanity(text)) {
+    if (clean && containsProfanity(clean)) {
       socket.emit('visitor:blocked', { reason: 'profanity' });
       return;
     }
-    const msg = store.addMessage(visitorId, 'visitor', text.trim());
+    const msg = store.addMessage(visitorId, 'visitor', clean.trim(), hasImage ? image : null);
     io.to('visitor:' + visitorId).emit('chat:message', msg);
     const convo = store.getConversation(visitorId);
     io.to('owners').emit('owner:conversationUpdated', convo);
-    notifyOwners(convo.name || 'Someone', text.trim());
+    notifyOwners(convo.name || 'Someone', clean.trim() || 'Sent a photo');
   });
 
   socket.on('visitor:editMessage', ({ messageId, text }) => {
@@ -164,10 +170,12 @@ io.on('connection', (socket) => {
     socket.emit('owner:history', convo);
   });
 
-  socket.on('owner:send', ({ conversationId, text }) => {
+  socket.on('owner:send', ({ conversationId, text, image }) => {
     if (role !== 'owner' || !conversationId) return;
-    if (!text || typeof text !== 'string' || !text.trim()) return;
-    const msg = store.addMessage(conversationId, 'owner', text.trim());
+    const hasImage = image && validImage(image);
+    const clean = (text || '').toString();
+    if (!hasImage && !clean.trim()) return;
+    const msg = store.addMessage(conversationId, 'owner', clean.trim(), hasImage ? image : null);
     io.to('visitor:' + conversationId).emit('chat:message', msg);
     const convo = store.getConversation(conversationId);
     io.to('owners').emit('owner:conversationUpdated', convo);

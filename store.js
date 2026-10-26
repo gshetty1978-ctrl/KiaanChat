@@ -42,9 +42,10 @@ function create() {
       c.name = name.slice(0, 40);
       save();
     },
-    addMessage(id, from, text) {
+    addMessage(id, from, text, image) {
       const c = this.getConversation(id);
       const msg = { id: crypto.randomUUID(), from, text: text.slice(0, 2000), at: Date.now() };
+      if (image) msg.image = image;
       c.messages.push(msg);
       c.updatedAt = msg.at;
       save();
