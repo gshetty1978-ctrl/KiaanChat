@@ -6,7 +6,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const webpush = require('web-push');
 const { create: createStore } = require('./store.js');
-const { persistImage } = require('./firebase.js');
+const { persistImage } = require('./supabase.js');
 
 const store = createStore();
 const OWNER_PIN = process.env.OWNER_PIN || '';
